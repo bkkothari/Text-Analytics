@@ -1,0 +1,387 @@
+---
+title: "HW_TextMining"
+author: "*Bhushan*"
+date: "February 1, 2016"
+output: html_document
+---
+
+### Text Analytics
+
+Using the package **rvest** one can download web pages. Let us Extract text from them and pull the MD&A, which is the description of the Management Discussion and Analysis inside the 10-K filing. We will do this for any one stock ticker(Groupon) . You may find the 10-K filings at the EDGAR web site provided by the SEC. In the MD&A just grab only the overview paragraphs preceding the Sales Data. Print out a clean paragraph, i.e., write code to clean up the strange characters in the text.  
+
+We have used following packages:
+- rvest
+- slam
+- tm
+- wordcloud
+- lsa
+- Rcurl
+- XML
+- stringr
+- igraph
+- topicmodels
+
+```{r,echo=FALSE}
+library(rvest)
+library(slam)
+library(tm)
+library(wordcloud)
+library(lsa)
+library(RCurl)
+library(XML)
+library(stringr)
+library(igraph)
+library(topicmodels)
+```
+
+We read the 10K's using **read_html()** function and extract the particular text using html_node().
+
+```{r}
+
+#Read the 10K's for Groupon
+htmlpage <- read_html("https://www.sec.gov/Archives/edgar/data/1490281/000144530512000922/groupon10-k.htm#s510FC9A31D5A3D1BAD2560B662E0F3F9")
+
+#We extract all the paragraphs present under MD&A using n-th child attribute
+overview <- htmlpage%>%
+  html_node("div:nth-child(785)")%>% 
+  html_text()
+
+p2 <- htmlpage%>%
+  html_node("div:nth-child(786)")%>% 
+  html_text()
+
+p3 <- htmlpage%>%
+  html_node("div:nth-child(787)")%>% 
+  html_text()
+
+p4 <- htmlpage%>%
+  html_node("div:nth-child(788)")%>% 
+  html_text()
+
+text = c(overview,p2,p3,p4)
+
+text = paste(text,collapse=" ")
+print(text)
+```
+
+
+Let us check how many sentences are there in the extracted text. We will summarize the extracted text into 1/4 of its current length in terms of representative sentences using Jaccard Similarity. 
+
+
+```{r}
+#Split them on ". " to get count of number of sentences.
+text2 = strsplit(text,". ",fixed=TRUE)
+#print(text2)
+totalSentences = length(text2[[1]])
+print(totalSentences)
+mText = text2[[1]]
+
+#We are performing the jaccard similarity on text without any modification
+
+summaryLength = as.integer(totalSentences/4)
+print(summaryLength)
+text_summary = function(text, n) {
+  m = length(text)  # No of sentences in input
+  jaccard = matrix(0,m,m)  #Store match index
+  for (i in 1:m) {
+    for (j in i:m) {
+      a = text[i]; aa = unlist(strsplit(a," "))
+      b = text[j]; bb = unlist(strsplit(b," "))
+      jaccard[i,j] = length(intersect(aa,bb))/
+                          length(union(aa,bb))
+      jaccard[j,i] = jaccard[i,j]
+    }
+  }
+  similarity_score = rowSums(jaccard)
+  res = sort(similarity_score, index.return=TRUE, 
+          decreasing=TRUE)
+  idx = res$ix[1:n]
+  summary = text[idx]
+}
+
+ctextCos = Corpus(VectorSource(mText))
+ctextCos = tm_map(ctextCos, removeWords, stopwords("english"))
+ctextCos = tm_map(ctextCos, removePunctuation)
+ctextCos = tm_map(ctextCos, removePunctuation)
+ctextCos = tm_map(ctextCos,content_transformer(tolower))
+
+updatedTextJac = NULL
+for (j in 1:length(ctextCos)) {
+  temp = ctextCos[[j]]$content
+    if (temp!="") { updatedTextJac = c(updatedTextJac,temp) }
+    }
+updatedTextJac = as.array(updatedTextJac)
+
+summarizedText = text_summary(updatedTextJac,summaryLength)
+print(summarizedText)
+```
+
+
+### Wordcloud
+
+Convert the sentences you created into a Corpus using the **tm** package. Each sentence will be a separate document in this corpus. Next, convert the corpus into a term-document matrix (TDM). From this prepare a wordcloud summarizing the corpus. 
+
+
+```{r}
+ctext = Corpus(VectorSource(mText))
+ctext = tm_map(ctext, content_transformer(tolower))
+ctext = tm_map(ctext, removePunctuation)
+ctext = tm_map(ctext, removeWords, stopwords("english"))
+ctext = tm_map(ctext, stemDocument)
+
+tdm = TermDocumentMatrix(ctext,control=list(minWordLength=1))
+tdm2 = as.matrix(tdm)
+wordcount = sort(rowSums(tdm2),decreasing=TRUE)
+tdm_names = names(wordcount)
+wordcloud(tdm_names,wordcount, colors=brewer.pal(8,"Dark2"))
+```
+
+
+
+We will use the TDM to find the matrix of cosine distances between all sentences. Then generate a new summary using cosine distances instead of Jaccard similarity as done previously. Compare the two results and comment. 
+
+
+```{r}
+#We are performing the jaccard similarity on text without any modification
+
+# We should also perform cosin on text without modification
+text_summary_cosine = function(cosineM, text, n) {
+  cosTotal = rowSums(cosineM)
+  resC = sort(cosTotal, index.return=TRUE, 
+          decreasing=TRUE)
+  idx = resC$ix[1:n]
+  text[idx]
+}
+
+ctextCos = Corpus(VectorSource(mText))
+ctextCos = tm_map(ctextCos, removeWords, stopwords("english"))
+ctextCos = tm_map(ctextCos, removePunctuation)
+ctextCos = tm_map(ctextCos, removePunctuation)
+ctextCos = tm_map(ctextCos,content_transformer(tolower))
+
+tdmCos = TermDocumentMatrix(ctextCos,control=list(minWordLength=1))
+
+cosine_Mat = crossprod_simple_triplet_matrix(tdmCos)/(sqrt(col_sums(tdmCos^2) %*% t(col_sums(tdmCos^2))))
+
+#print(cosine_Mat)
+updatedTextCos = NULL
+for (j in 1:length(ctextCos)) {
+  temp = ctextCos[[j]]$content
+    if (temp!="") { updatedTextCos = c(updatedTextCos,temp) }
+    }
+updatedTextCos = as.array(updatedTextCos)
+
+
+cosineSummarizedText = text_summary_cosine(cosine_Mat,updatedTextCos,summaryLength)
+print(cosineSummarizedText)
+
+```
+
+Thus we see that both the methods have generated slightly different summary. 
+
+### Mood Scoring the Text
+Mood score the MD&A from the stock you chose and see if it positive or negative. 
+
+#### Answer: 
+
+```{r}
+getwd()
+setwd("C:/Users/Bhushan/Documents")
+HIDict = readLines("inqdict.txt")
+dict_pos = HIDict[grep("Pos",HIDict)]
+poswords = NULL
+for (s in dict_pos) {
+  s = strsplit(s,"#")[[1]][1]
+	poswords = c(poswords,strsplit(s," ")[[1]][1])
+} 
+dict_neg = HIDict[grep("Neg",HIDict)]
+negwords = NULL
+for (s in dict_neg) {
+	s = strsplit(s,"#")[[1]][1]
+	negwords = c(negwords,strsplit(s," ")[[1]][1])
+}
+poswords = tolower(poswords)
+negwords = tolower(negwords)
+
+#Stemming was not done in this case, however it can be easily done using similar tm_map command.
+
+#We create a bag of wprds first
+updatedText = NULL
+for (j in 1:length(ctext)) {
+  temp = ctext[[j]]$content
+    if (temp!="") { updatedText = c(updatedText,temp) }
+    }
+updatedText = as.array(updatedText)
+
+unListed = unlist(strsplit(updatedText," "))
+posmatch = match(unListed,poswords)
+numposmatch = length(posmatch[which(posmatch>0)])
+negmatch = match(unListed,negwords)
+numnegmatch = length(negmatch[which(negmatch>0)])
+print(c(numposmatch,numnegmatch))
+
+```
+
+
+### Text analytics on an article.
+
+Get the article at: 
+
+http://www.politico.com/magazine/story/2016/01/obama-biggest-achievements-213487?paginate=false
+
+1. Clean up this article, and reduce it to sentences.
+2. Then compute the Jaccard similarity across sentences, pairwise. Find the median Jaccard similarity score. 
+3. Then, treating each sentence as a node in a network, create the adjacency matrix of nodes (sentences) in the network, such that two nodes are connected if the Jaccard score is greater than the median, else the nodes are not connected. PLot the network. 
+4. Rank the sentences by their respective centrality scores. Create a summary of the top 1/10 of sentences by centrality score. 
+
+We will try to use any ideas you may have to glean "context" from it, or do an analysis of the article, such as summarize topics that it may be covering. (For example, look up topic analysis.)
+
+```{r}
+
+# download html
+article = read_html("http://www.politico.com/magazine/story/2016/01/obama-biggest-achievements-213487?paginate=false")
+ 
+# parse html and extract only paragraph elements
+doc = htmlParse(article, asText=TRUE)
+plain.text <- xpathSApply(doc, "//p", xmlValue)
+
+storyT = plain.text
+class(storyT)
+#Extract the useful parts of text by removing aurthor name and dates
+storyT = storyT[6:108]
+
+storyT = paste(storyT, collapse = "\n")
+storyT = gsub("[\r\n]", "", storyT)
+storyT <- gsub("[][]|[^[:ascii:]]", "", storyT, perl=T)
+
+storySentences = strsplit(storyT,". ",fixed=TRUE)[[1]]
+
+```
+
+Perform below lines if you want to compute jaccard similarity after removing stopwords
+
+```{r}
+storyCorpus = Corpus(VectorSource(storySentences))
+storyCorpus = tm_map(storyCorpus,removePunctuation)
+storyCorpus = tm_map(storyCorpus,removeWords, stopwords("english"))
+storyCorpus = tm_map(storyCorpus,content_transformer(tolower))
+storyCorpus = tm_map(storyCorpus,stemDocument)
+storyCorpus = tm_map(storyCorpus, stripWhitespace)
+#convert to array of strings
+txt = NULL
+for (j in 1:length(storyCorpus)) {
+  txt = c(txt,storyCorpus[[j]]$content)
+}
+
+storySentences2 = txt
+length(storySentences2)
+
+```
+
+Create Jaccard matrix and find median of that matrix. then create a Adjacency matix based on the conditions specified in the question and plot a graph.
+
+```{r}
+#n is the number of sentences present
+n = length(storySentences2)
+
+print(n)
+#Here n is length of array
+calculateJaccard = function(text, n){
+  m = length(text)  # No of sentences in input
+  jaccard = matrix(0,m,n)  #Store match index
+  for (i in 1:m) {
+    for (j in i:m) {
+      a = text[i]; aa = unlist(strsplit(a," "))
+      b = text[j]; bb = unlist(strsplit(b," "))
+      jaccard[i,j] = length(intersect(aa,bb))/
+                          length(union(aa,bb))
+      jaccard[j,i] = jaccard[i,j]
+    }
+  }
+  jaccard
+}
+
+#create jaccard matrix using calculate function
+jaccardM = calculateJaccard(storySentences,n)
+
+#If we want to generate jaccard for cleaned up text use storySentences2
+
+#Here we find median over entire matrix as we want to find the median jaccard similarity score between 2 sentences
+medianJacc = median(jaccardM)  
+print(medianJacc)
+
+#We define a function which will generate a adjacency matrix based on the condition of median.
+adjacencyM = function(jaccardMat,n,median){
+  m = n
+  adjMat = matrix(0,m,n)
+  for(i in 1:n){
+    for(j in i:m){
+      if(i!=j & jaccardMat[i,j]>median){
+        adjMat[i,j] = 1
+        adjMat[j,i] = 1
+      }
+    }
+  }
+  adjMat
+}
+
+
+adjMat = adjacencyM(jaccardM,n,medianJacc)
+net=graph.adjacency(adjmatrix=adjMat,mode="undirected",weighted=TRUE,diag=FALSE)
+plot(net)
+
+```
+
+Calculate centrality scores and obtain a summary.
+
+```{r}
+#Calculate centrality
+centR = evcent(net)
+centR
+
+#obtain indices of sentences based on descending centrality scores
+centrVec = sort(centR$vector, index.return=TRUE, 
+          decreasing=TRUE)
+idx = centrVec$ix[1:n]
+
+oneTenth = as.integer(n/10)
+summary = storySentences[idx]
+
+print(summary[1:oneTenth])
+
+
+```
+
+
+To perform topic analysis we need topicmodels package in R. Create a DocumentTermMatrix. Please note that its different from TermDocumentMatrix. I spent a lot of time trying to generate topic model using TermDocMat instead of DocTermMat. It has Documents as rows and terms as columns.
+
+Randomly assign number of topics to be modeled and use LDA method.
+```{r}
+dtm = DocumentTermMatrix(storyCorpus,control=list(minWordLength=3))
+class(dtm)
+dim(dtm)
+#Set parameters for Gibbs sampling
+burnin <- 4000
+iter <- 2000
+thin <- 500
+seed <-list(2003,5,63,100001,765)
+nstart <- 5
+best <- TRUE
+
+#Number of topics
+k <- 5
+
+#Run LDA using Gibbs sampling
+ldaOut <-LDA(dtm,k, method="Gibbs", control=list(nstart=nstart, seed = seed, best=best, burnin = burnin, iter = iter, thin=thin))
+
+ldaOut.topics <- as.matrix(topics(ldaOut))
+print(table(ldaOut.topics))
+#top 10 terms in each topic
+ldaOut.terms <- as.matrix(terms(ldaOut,10))
+print(ldaOut.terms)
+#probabilities associated with each topic assignment
+topicProbabilities <- as.data.frame(ldaOut@gamma)
+print(topicProbabilities)
+
+```
+
